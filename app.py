@@ -10,14 +10,14 @@ import fitz
 import gc
 
 # --- SETUP ---
-SHOP_NAME = "Hisar Photostat"
+SHOP_NAME = "Hisar Photostat" # Branded for your local market
 TEMP_DIR = "temp_processing"
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
 
 st.set_page_config(page_title=f"{SHOP_NAME} - Scanner Pro", layout="wide", page_icon="📄")
 
-# Professional UI Styling
+# UI Style
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
@@ -27,7 +27,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title(f"📄 {SHOP_NAME} Pro Workstation")
-st.write("Hybrid Engine: Optimized for Digital PDFs, Screenshots, and Camera Photos")
+st.write("Advanced Noise Reduction Engine | Optimized for Newspaper & Low-Quality Prints")
 
 # --- SIDEBAR ---
 st.sidebar.header("🛠️ Global Controls")
@@ -71,17 +71,14 @@ if uploaded_files:
             for p_num in range(len(doc)):
                 with st.spinner(f"Rendering PDF Page {p_num + 1}..."):
                     page = doc.load_page(p_num)
-                    # KEEPING MAX QUALITY FOR PDF
                     pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
                     img_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                    
                     result = scan_image(img_pil, color_vibrancy, False, [top_m, bottom_m, left_m, right_m], scan_mode, is_pdf=True)
                     
                     page_path = os.path.join(TEMP_DIR, f"img_{uuid.uuid4()}.jpg")
                     save_bgr = cv2.cvtColor(result, cv2.COLOR_RGB2BGR) if len(result.shape)==3 else result
                     cv2.imwrite(page_path, save_bgr, [cv2.IMWRITE_JPEG_QUALITY, 98])
                     saved_image_paths.append(page_path)
-                    
                     with thumb_cols[current_page_idx % 5]:
                         st.image(result, caption=f"P.{current_page_idx+1}", use_container_width=True)
                     current_page_idx += 1
@@ -90,21 +87,18 @@ if uploaded_files:
         else:
             with st.spinner(f"Enhancing Image..."):
                 img_pil = Image.open(uploaded_file)
-                # Call with is_pdf=False to use image-specific sharpening
                 result = scan_image(img_pil, color_vibrancy, do_warp, [top_m, bottom_m, left_m, right_m], scan_mode, is_pdf=False)
                 
                 page_path = os.path.join(TEMP_DIR, f"img_{uuid.uuid4()}.jpg")
                 save_bgr = cv2.cvtColor(result, cv2.COLOR_RGB2BGR) if len(result.shape)==3 else result
                 cv2.imwrite(page_path, save_bgr, [cv2.IMWRITE_JPEG_QUALITY, 98])
                 saved_image_paths.append(page_path)
-                
                 with thumb_cols[current_page_idx % 5]:
                     st.image(result, caption=f"P.{current_page_idx+1}", use_container_width=True)
                 current_page_idx += 1
                 del result
                 gc.collect()
 
-    # --- EXPORT ---
     st.sidebar.markdown("---")
     if st.sidebar.button("🚀 STEP 1: COMPILE PDF"):
         if saved_image_paths:
@@ -113,21 +107,11 @@ if uploaded_files:
                 for path in saved_image_paths:
                     pdf.add_page()
                     pdf.image(path, 0, 0, 210, 297)
-                
                 pdf_bytes = pdf.output(dest='S').encode('latin-1')
                 st.sidebar.success("✅ Document Built!")
-                st.sidebar.download_button(
-                    label="🔥 STEP 2: DOWNLOAD TO PRINT",
-                    data=pdf_bytes,
-                    file_name=f"{file_name}.pdf",
-                    mime="application/pdf",
-                    key="final_download"
-                )
-        else:
-            st.sidebar.error("No pages found.")
-
+                st.sidebar.download_button(label="🔥 STEP 2: DOWNLOAD TO PRINT", data=pdf_bytes, file_name=f"{file_name}.pdf", mime="application/pdf")
 else:
     st.info("👋 Upload a digital PDF or an image screenshot to clean it for printing.")
 
 st.markdown("---")
-st.caption(f"Developed by Himanshu Kaushik AI | Hisar Photostat Professional Edition")
+st.caption(f"Developed by Himanshu AI | {SHOP_NAME} Professional Edition")

@@ -20,10 +20,10 @@ def apply_white_balance(img):
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
 def scan_image(image, color_boost, do_warp, margins, mode, is_pdf=False):
-    # Convert to BGR
+    # Convert PIL to OpenCV BGR
     img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
     
-    # --- STEP 1: RESOLUTION (Don't shrink screenshots too much) ---
+    # Normalization
     if not is_pdf:
         h_orig, w_orig = img.shape[:2]
         if max(h_orig, w_orig) > 3000:
@@ -32,13 +32,13 @@ def scan_image(image, color_boost, do_warp, margins, mode, is_pdf=False):
 
     img = apply_white_balance(img)
     
-    # --- STEP 2: CROP ---
+    # Manual Crop
     h, w = img.shape[:2]
     t, b, l, r = margins
     img = img[int(h*t/100):int(h*(1-b/100)), int(w*l/100):int(w*(1-r/100))]
     orig_working = img.copy()
     
-    # --- STEP 3: WARP (Skip for PDF) ---
+    # Auto-Warp
     if do_warp and not is_pdf:
         gray_w = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         edged = cv2.Canny(cv2.GaussianBlur(gray_w, (5, 5), 0), 50, 150)
@@ -58,11 +58,11 @@ def scan_image(image, color_boost, do_warp, margins, mode, is_pdf=False):
                 except: pass
                 break
 
-    # --- STEP 4: FILTER ENGINES ---
+    # --- FILTER ENGINES ---
     if mode == "Magic Color (Pro)":
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         l_c, a_c, b_c = cv2.split(lab)
-        # Background Leveling
+        # Background Cleaning
         dilated = cv2.dilate(l_c, np.ones((15, 15), np.uint8))
         bg = cv2.medianBlur(dilated, 21)
         l_norm = cv2.normalize(255 - cv2.absdiff(l_c, bg), None, 0, 255, cv2.NORM_MINMAX)
@@ -78,19 +78,24 @@ def scan_image(image, color_boost, do_warp, margins, mode, is_pdf=False):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
         if is_pdf:
-            # PURE DIGITAL LOGIC: Zero blurring, high-pass threshold
-            # This maintains the quality you liked before
             img = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 25, 15)
         else:
-            # SCREENSHOT/PHOTO LOGIC:
-            # 1. Normalize background to remove "gray" tints or shadows
+            # --- THE NEWSPAPER FIX: De-speckle Logic ---
+            # 1. Background Normalization
             dilated = cv2.dilate(gray, np.ones((15, 15), np.uint8))
             bg = cv2.medianBlur(dilated, 25)
             norm = cv2.normalize(255 - cv2.absdiff(gray, bg), None, 0, 255, cv2.NORM_MINMAX)
-            # 2. Light Sharpening to counteract screenshot compression blur
-            norm = cv2.addWeighted(norm, 1.5, cv2.GaussianBlur(norm, (0,0), 3), -0.5, 0)
-            # 3. Dynamic Thresholding
-            img = cv2.adaptiveThreshold(norm, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, 12)
+            
+            # 2. Thresholding
+            thresh = cv2.adaptiveThreshold(norm, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, 10)
+            
+            # 3. Morphological Opening (The "Dot Eater")
+            # This deletes anything smaller than 2x2 pixels (the black dots)
+            kernel = np.ones((2, 2), np.uint8)
+            img = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+            
+            # 4. Final Polish
+            img = cv2.GaussianBlur(img, (1, 1), 0)
 
     if len(img.shape) == 2: return img
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
