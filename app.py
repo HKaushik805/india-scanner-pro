@@ -6,17 +6,30 @@ from fpdf import FPDF
 
 # --- ENTERPRISE CONFIG ---
 SHOP_NAME = "Hisar Photostat"
-LICENSE_KEY = "HP-ENTERPRISE-PRO-SCAN-2026" # <--- New Stronger Key
+LICENSE_KEY = "HP-ENTERPRISE-PRO-SCAN-2026" 
 TEMP_DIR = "temp_processing"
 if not os.path.exists(TEMP_DIR): os.makedirs(TEMP_DIR)
 
 st.set_page_config(page_title=f"{SHOP_NAME} Enterprise Scanner", layout="wide", page_icon="🛡️")
 
-# Initialize Session State for Authentication
+# --- CSS HACK TO REMOVE STREAMLIT BRANDING ---
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            header {visibility: hidden;}
+            div[data-testid="stStatusWidget"] {visibility: hidden;}
+            .stAppDeployButton {display:none;}
+            [data-testid="stToolbar"] {visibility: hidden !important;}
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
+# Initialize Session State
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
-# --- CUSTOM CSS ---
+# --- UI CUSTOM STYLING ---
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
@@ -39,17 +52,17 @@ if not st.session_state["authenticated"]:
                 st.session_state["authenticated"] = True
                 st.rerun()
             else:
-                st.error("❌ Invalid License Key. Please contact Himanshu AI Solutions.")
+                st.error("❌ Invalid License Key. Contact Himanshu AI Solutions.")
     st.stop()
 
-# --- MAIN APP LOGIC (Only runs if authenticated) ---
+# --- MAIN APP LOGIC ---
 st.title(f"📄 {SHOP_NAME} Pro Workstation")
 st.sidebar.success("✅ Enterprise License Active")
 
-# Sidebar Controls
+# Sidebar
 st.sidebar.header("🛠️ Global Settings")
 scan_mode = st.sidebar.selectbox("Filter Mode", ["Magic Color (Pro)", "B&W Pro", "Original"])
-ink_power = st.sidebar.slider("Ink Boldness (Recovery)", 1.0, 2.5, 1.25)
+ink_power = st.sidebar.slider("Ink Boldness", 1.0, 2.5, 1.25)
 do_warp = st.sidebar.checkbox("Auto-Crop Photos", value=True)
 
 with st.sidebar.expander("✂️ Manual Crop"):
@@ -67,7 +80,7 @@ if st.sidebar.button("🗑️ Reset All Pages"):
         except: pass
     st.rerun()
 
-# --- PROCESSING ENGINE ---
+# Processing
 uploaded_files = st.file_uploader("Upload Photos or PDF", type=["jpg", "png", "jpeg", "pdf"], accept_multiple_files=True)
 
 saved_paths = []
@@ -80,22 +93,24 @@ if uploaded_files:
             doc = fitz.open(stream=u_file.read(), filetype="pdf")
             for p_n in range(len(doc)):
                 with st.spinner(f"PDF P.{p_n+1}"):
-                    pix = doc.load_page(p_n).get_pixmap(matrix=fitz.Matrix(3, 3))
+                    pix = doc.load_page(p_n).get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                     img_p = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                     res = scan_image(img_p, ink_power, False, [top_m, bottom_m, left_m, right_m], scan_mode, True)
                     p_path = os.path.join(TEMP_DIR, f"e_{uuid.uuid4()}.jpg")
                     cv2.imwrite(p_path, cv2.cvtColor(res, cv2.COLOR_RGB2BGR) if len(res.shape)==3 else res, [cv2.IMWRITE_JPEG_QUALITY, 98])
                     saved_paths.append(p_path)
-                    with cols[idx%4]: st.image(res, use_container_width=True)
-                    idx += 1; gc.collect()
+                    with cols[idx % 4]: st.image(res, use_container_width=True)
+                    idx += 1
+                    gc.collect()
         else:
             with st.spinner("Processing..."):
                 res = scan_image(Image.open(u_file), ink_power, do_warp, [top_m, bottom_m, left_m, right_m], scan_mode, False)
                 p_path = os.path.join(TEMP_DIR, f"e_{uuid.uuid4()}.jpg")
                 cv2.imwrite(p_path, cv2.cvtColor(res, cv2.COLOR_RGB2BGR) if len(res.shape)==3 else res, [cv2.IMWRITE_JPEG_QUALITY, 98])
-                saved_paths.append(p_path); 
-                with cols[idx%4]: st.image(res, use_container_width=True)
-                idx += 1; gc.collect()
+                saved_paths.append(p_path)
+                with cols[idx % 4]: st.image(res, use_container_width=True)
+                idx += 1
+                gc.collect()
 
     st.sidebar.markdown("---")
     if st.sidebar.button("🚀 BUILD FINAL PDF"):
