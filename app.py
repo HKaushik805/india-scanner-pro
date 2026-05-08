@@ -8,36 +8,67 @@ from fpdf import FPDF
 SHOP_NAME = "Hisar Photostat"
 LICENSE_KEY = "HP-ENTERPRISE-PRO-SCAN-2026" 
 TEMP_DIR = "temp_processing"
-if not os.path.exists(TEMP_DIR): os.makedirs(TEMP_DIR)
+if not os.path.exists(TEMP_DIR):
+    os.makedirs(TEMP_DIR)
 
-st.set_page_config(page_title=f"{SHOP_NAME} Enterprise Scanner", layout="wide", page_icon="🛡️")
+# 1. SET PAGE CONFIG (Must be at the very top)
+st.set_page_config(
+    page_title=f"{SHOP_NAME} Enterprise Scanner", 
+    layout="wide", 
+    page_icon="🛡️",
+    initial_sidebar_state="expanded"
+)
 
-# --- CSS HACK TO REMOVE STREAMLIT BRANDING ---
-hide_st_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            header {visibility: hidden;}
-            div[data-testid="stStatusWidget"] {visibility: hidden;}
-            .stAppDeployButton {display:none;}
-            [data-testid="stToolbar"] {visibility: hidden !important;}
-            </style>
-            """
-st.markdown(hide_st_style, unsafe_allow_html=True)
-
-# Initialize Session State
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-
-# --- UI CUSTOM STYLING ---
+# 2. THE "WHITELABEL" CSS HACK (Fixes the Toggle Button visibility)
 st.markdown("""
     <style>
+    /* Hide the right-side dev tools (Deploy, Stop, Menu) */
+    .stDeployButton, #MainMenu, footer, [data-testid="stStatusWidget"] {
+        visibility: hidden;
+        display: none !important;
+    }
+
+    /* Target the top header bar - make it transparent so it doesn't block clicks */
+    header[data-testid="stHeader"] {
+        background-color: rgba(0,0,0,0) !important;
+        color: rgba(0,0,0,0) !important;
+        height: 3rem !important;
+    }
+
+    /* IMPORTANT: Force the Sidebar Toggle (Yellow Circle) to be visible */
+    [data-testid="collapsedControl"] {
+        visibility: visible !important;
+        display: flex !important;
+        background-color: #1a73e8 !important; /* Professional Blue */
+        border-radius: 0 5px 5px 0 !important;
+        color: white !important;
+        z-index: 999999 !important; /* Keep it on top of everything */
+        top: 10px !important;
+    }
+    
+    /* Style for the 'X' button inside the sidebar when it's open */
+    [data-testid="stSidebar"] button {
+        color: #1a73e8 !important;
+    }
+
+    /* Enterprise UI Styling */
     .main { background-color: #f8f9fa; }
-    .stButton>button { width: 100%; background-color: #1a73e8; color: white; height: 3.5em; border-radius: 10px; font-weight: bold; border: none;}
-    .stButton>button:hover { background-color: #1557b0; border: none; }
-    .download-btn { background-color: #d93025 !important; }
+    .stButton>button { 
+        width: 100%; 
+        background-color: #1a73e8; 
+        color: white; 
+        height: 3.5em; 
+        border-radius: 10px; 
+        font-weight: bold; 
+        border: none;
+    }
+    .stButton>button:hover { background-color: #1557b0; }
     </style>
     """, unsafe_allow_html=True)
+
+# --- AUTHENTICATION STATE ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
 
 # --- LOGIN SCREEN ---
 if not st.session_state["authenticated"]:
@@ -52,14 +83,13 @@ if not st.session_state["authenticated"]:
                 st.session_state["authenticated"] = True
                 st.rerun()
             else:
-                st.error("❌ Invalid License Key. Contact Himanshu AI Solutions.")
+                st.error("❌ Invalid License Key.")
     st.stop()
 
-# --- MAIN APP LOGIC ---
+# --- MAIN APP CONTENT ---
 st.title(f"📄 {SHOP_NAME} Pro Workstation")
-st.sidebar.success("✅ Enterprise License Active")
 
-# Sidebar
+# Sidebar Settings
 st.sidebar.header("🛠️ Global Settings")
 scan_mode = st.sidebar.selectbox("Filter Mode", ["Magic Color (Pro)", "B&W Pro", "Original"])
 ink_power = st.sidebar.slider("Ink Boldness", 1.0, 2.5, 1.25)
@@ -76,11 +106,13 @@ file_name = st.sidebar.text_input("Export PDF Name", value="Customer_Scan")
 
 if st.sidebar.button("🗑️ Reset All Pages"):
     for f in os.listdir(TEMP_DIR):
-        try: os.remove(os.path.join(TEMP_DIR, f))
-        except: pass
+        try:
+            os.remove(os.path.join(TEMP_DIR, f))
+        except:
+            pass
     st.rerun()
 
-# Processing
+# --- UPLOADER & PROCESSING ---
 uploaded_files = st.file_uploader("Upload Photos or PDF", type=["jpg", "png", "jpeg", "pdf"], accept_multiple_files=True)
 
 saved_paths = []
@@ -92,35 +124,52 @@ if uploaded_files:
         if is_p:
             doc = fitz.open(stream=u_file.read(), filetype="pdf")
             for p_n in range(len(doc)):
-                with st.spinner(f"PDF P.{p_n+1}"):
-                    pix = doc.load_page(p_n).get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
+                with st.spinner(f"Processing PDF P.{p_n+1}"):
+                    page = doc.load_page(p_n)
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                     img_p = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                     res = scan_image(img_p, ink_power, False, [top_m, bottom_m, left_m, right_m], scan_mode, True)
+                    
                     p_path = os.path.join(TEMP_DIR, f"e_{uuid.uuid4()}.jpg")
                     cv2.imwrite(p_path, cv2.cvtColor(res, cv2.COLOR_RGB2BGR) if len(res.shape)==3 else res, [cv2.IMWRITE_JPEG_QUALITY, 98])
                     saved_paths.append(p_path)
-                    with cols[idx % 4]: st.image(res, use_container_width=True)
+                    
+                    with cols[idx % 4]:
+                        st.image(res, use_container_width=True)
+                    
                     idx += 1
                     gc.collect()
         else:
             with st.spinner("Processing..."):
-                res = scan_image(Image.open(u_file), ink_power, do_warp, [top_m, bottom_m, left_m, right_m], scan_mode, False)
+                img_input = Image.open(u_file)
+                res = scan_image(img_input, ink_power, do_warp, [top_m, bottom_m, left_m, right_m], scan_mode, False)
+                
                 p_path = os.path.join(TEMP_DIR, f"e_{uuid.uuid4()}.jpg")
                 cv2.imwrite(p_path, cv2.cvtColor(res, cv2.COLOR_RGB2BGR) if len(res.shape)==3 else res, [cv2.IMWRITE_JPEG_QUALITY, 98])
                 saved_paths.append(p_path)
-                with cols[idx % 4]: st.image(res, use_container_width=True)
+                
+                with cols[idx % 4]:
+                    st.image(res, use_container_width=True)
+                
                 idx += 1
                 gc.collect()
 
     st.sidebar.markdown("---")
     if st.sidebar.button("🚀 BUILD FINAL PDF"):
         if saved_paths:
-            with st.spinner("Compiling PDF..."):
+            with st.spinner("Compiling Document..."):
                 pdf = FPDF()
                 for p in saved_paths:
-                    pdf.add_page(); pdf.image(p, 0, 0, 210, 297)
+                    pdf.add_page()
+                    pdf.image(p, 0, 0, 210, 297)
+                
                 pdf_bytes = pdf.output(dest='S').encode('latin-1')
-                st.sidebar.download_button("🔥 DOWNLOAD TO PRINT", data=pdf_bytes, file_name=f"{file_name}.pdf", mime="application/pdf")
+                st.sidebar.download_button(
+                    label="🔥 DOWNLOAD TO PRINT", 
+                    data=pdf_bytes, 
+                    file_name=f"{file_name}.pdf", 
+                    mime="application/pdf"
+                )
 
 st.markdown("---")
 st.caption(f"🛡️ {SHOP_NAME} Enterprise Suite | Developed by Himanshu AI Solutions")
