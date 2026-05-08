@@ -7,11 +7,18 @@ from fpdf import FPDF
 # --- ENTERPRISE CONFIG ---
 SHOP_NAME = "Hisar Photostat"
 LICENSE_KEY = "HP-ENTERPRISE-PRO-SCAN-2026" 
-TEMP_DIR = "temp_processing"
-if not os.path.exists(TEMP_DIR):
-    os.makedirs(TEMP_DIR)
 
-# 1. SET PAGE CONFIG (Must be first)
+# CLOUD-SAFE TEMP DIRECTORY
+# We use /tmp/ for Linux-based Streamlit Cloud servers
+TEMP_DIR = "/tmp/scanner_pages"
+if not os.path.exists(TEMP_DIR):
+    try:
+        os.makedirs(TEMP_DIR)
+    except:
+        TEMP_DIR = "temp_processing" # Fallback for local Windows
+        if not os.path.exists(TEMP_DIR): os.makedirs(TEMP_DIR)
+
+# 1. SET PAGE CONFIG
 st.set_page_config(
     page_title=f"{SHOP_NAME} Enterprise Scanner", 
     layout="wide", 
@@ -22,20 +29,15 @@ st.set_page_config(
 # 2. THE "SAFE" WHITELABEL CSS
 st.markdown("""
     <style>
-    /* Hide specific right-side elements without breaking the app */
     .stDeployButton {display:none !important;}
     footer {visibility: hidden !important;}
     #MainMenu {visibility: hidden !important;}
-    
-    /* Style the Sidebar Toggle (Yellow Circle) for visibility */
     [data-testid="collapsedControl"] {
         visibility: visible !important;
         background-color: #1a73e8 !important;
         color: white !important;
         border-radius: 5px !important;
     }
-
-    /* Enterprise UI Styling */
     .main { background-color: #f8f9fa; }
     .stButton>button { 
         width: 100%; 
@@ -73,7 +75,7 @@ st.title(f"📄 {SHOP_NAME} Pro Workstation")
 # Sidebar
 st.sidebar.success("✅ License Active")
 scan_mode = st.sidebar.selectbox("Filter Type", ["Magic Color (Pro)", "B&W Pro", "Original"])
-ink_power = st.sidebar.slider("Ink Boldness", 1.0, 2.5, 1.25)
+ink_power = st.sidebar.slider("Ink Boldness", 1.0, 2.5, 1.2)
 do_warp = st.sidebar.checkbox("Auto-Crop Photos", value=True)
 
 with st.sidebar.expander("✂️ Manual Crop"):
@@ -92,7 +94,7 @@ if st.sidebar.button("🗑️ Clear All"):
     st.rerun()
 
 # Processing
-uploaded_files = st.file_uploader("Upload Files", type=["jpg", "png", "jpeg", "pdf"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload Photos or PDF", type=["jpg", "png", "jpeg", "pdf"], accept_multiple_files=True)
 
 saved_paths = []
 if uploaded_files:
@@ -100,16 +102,19 @@ if uploaded_files:
     cols = st.columns(4)
     for u_file in uploaded_files:
         if u_file.name.lower().endswith('.pdf'):
-            doc = fitz.open(stream=u_file.read(), filetype="pdf")
-            for p_n in range(len(doc)):
-                pix = doc.load_page(p_n).get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
-                img_p = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                res = scan_image(img_p, ink_power, False, [top_m, bottom_m, left_m, right_m], scan_mode, True)
-                p_path = os.path.join(TEMP_DIR, f"p_{uuid.uuid4()}.jpg")
-                cv2.imwrite(p_path, cv2.cvtColor(res, cv2.COLOR_RGB2BGR) if len(res.shape)==3 else res, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                saved_paths.append(p_path)
-                with cols[idx%4]: st.image(res, use_container_width=True)
-                idx += 1; gc.collect()
+            try:
+                doc = fitz.open(stream=u_file.read(), filetype="pdf")
+                for p_n in range(len(doc)):
+                    pix = doc.load_page(p_n).get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
+                    img_p = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    res = scan_image(img_p, ink_power, False, [top_m, bottom_m, left_m, right_m], scan_mode, True)
+                    p_path = os.path.join(TEMP_DIR, f"p_{uuid.uuid4()}.jpg")
+                    cv2.imwrite(p_path, cv2.cvtColor(res, cv2.COLOR_RGB2BGR) if len(res.shape)==3 else res, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                    saved_paths.append(p_path)
+                    with cols[idx%4]: st.image(res, use_container_width=True)
+                    idx += 1; gc.collect()
+            except Exception as e:
+                st.error(f"Error reading PDF: {e}")
         else:
             res = scan_image(Image.open(u_file), ink_power, do_warp, [top_m, bottom_m, left_m, right_m], scan_mode, False)
             p_path = os.path.join(TEMP_DIR, f"p_{uuid.uuid4()}.jpg")
