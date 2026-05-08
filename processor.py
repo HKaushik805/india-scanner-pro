@@ -28,17 +28,21 @@ def magic_color_engine(img, color_boost):
     dilated = cv2.dilate(l, np.ones((kernel_size, kernel_size), np.uint8))
     bg = cv2.medianBlur(dilated, kernel_size)
     l_norm = cv2.divide(l, bg, scale=255)
+    
     xp = [0, 50, 150, 225, 255]
     fp = [0, 40, 155, 255, 255] 
     table = np.interp(np.arange(256), xp, fp).astype('uint8')
     l_final = cv2.LUT(l_norm, table)
+
     color_mask = cv2.threshold(l_final, 250, 255, cv2.THRESH_BINARY_INV)[1] / 255.0
     background_mask = (l_final >= 250).astype(float)
     a_neutral = (a.astype(float) * (1 - background_mask) + 128 * background_mask).astype(np.uint8)
     b_neutral = (b.astype(float) * (1 - background_mask) + 128 * background_mask).astype(np.uint8)
+    
     a_float, b_float = a_neutral.astype(float), b_neutral.astype(float)
     a_res = (128 + (a_float - 128) * (1 + (color_boost - 1) * color_mask)).clip(0, 255).astype(np.uint8)
     b_res = (128 + (b_float - 128) * (1 + (color_boost - 1) * color_mask)).clip(0, 255).astype(np.uint8)
+    
     merged = cv2.merge((l_final, a_res, b_res))
     result = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
     sharp_kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]]) * 0.05
@@ -51,9 +55,11 @@ def scan_image(image, color_boost, do_warp, margins, mode, is_pdf=False):
     if not is_pdf and max(h_orig, w_orig) > 2200:
         scale = 2200 / max(h_orig, w_orig)
         img = cv2.resize(img, (int(w_orig * scale), int(h_orig * scale)), interpolation=cv2.INTER_AREA)
+
     h, w = img.shape[:2]
     img = img[int(h*margins[0]/100):int(h*(1-margins[1]/100)), int(w*margins[2]/100):int(w*(1-margins[3]/100))]
     orig = img.copy()
+    
     if do_warp and not is_pdf:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5,5))
@@ -73,14 +79,19 @@ def scan_image(image, color_boost, do_warp, margins, mode, is_pdf=False):
                     img = cv2.warpPerspective(orig, M, (w_w, h_w))
                 except: pass
                 break
+
     if mode == "Magic Color (Pro)":
         return cv2.cvtColor(magic_color_engine(img, color_boost), cv2.COLOR_BGR2RGB)
     elif mode == "B&W Pro":
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        bg = cv2.medianBlur(cv2.dilate(gray, np.ones((11,11), np.uint8)), 21)
+        bg = cv2.medianBlur(cv2.dilate(gray, np.ones((15,15), np.uint8)), 25)
         norm = cv2.divide(gray, bg, scale=255)
-        blurred = cv2.GaussianBlur(norm, (0, 0), 2)
-        norm = cv2.addWeighted(norm, 1.8, blurred, -0.8, 0)
-        res = cv2.adaptiveThreshold(norm, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 25, 20)
+        blurred = cv2.GaussianBlur(norm, (0, 0), 3)
+        norm = cv2.addWeighted(norm, 2.0, blurred, -1.0, 0)
+        res = cv2.adaptiveThreshold(norm, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 15)
+        # Boldness recovery
+        kernel_thicken = np.ones((2,2), np.uint8)
+        res = cv2.erode(res, kernel_thicken, iterations=1)
         return cv2.morphologyEx(res, cv2.MORPH_OPEN, np.ones((2,2), np.uint8))
+
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
