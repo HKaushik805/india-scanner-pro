@@ -15,56 +15,69 @@ def apply_studio_white_balance(img):
     result = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     avg_a = np.average(result[:, :, 1])
     avg_b = np.average(result[:, :, 2])
-    brightness_weight = (result[:, :, 0] / 255.0)
-    result[:, :, 1] = result[:, :, 1] - ((avg_a - 128) * brightness_weight)
-    result[:, :, 2] = result[:, :, 2] - ((avg_b - 128) * brightness_weight)
+    l_chan = result[:, :, 0] / 255.0
+    # Targeted neutralization: force background highlights to 0 saturation
+    result[:, :, 1] = result[:, :, 1] - ((avg_a - 128) * l_chan * 1.5)
+    result[:, :, 2] = result[:, :, 2] - ((avg_b - 128) * l_chan * 1.5)
     return cv2.cvtColor(result, cv2.COLOR_LAB2BGR)
 
-def magic_color_engine(img, color_boost, is_pdf=False):
+def magic_color_engine(img, color_boost, is_pdf):
+    # 1. White Balance
     img = apply_studio_white_balance(img)
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
-    
-    # SPEED OPTIMIZATION: Smaller kernels for faster estimation
-    k_size = 51 if is_pdf else 101
+
+    # 2. Local Contrast Boost (To find text in the 'mush')
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+    l = clahe.apply(l)
+
+    # 3. Division Normalization (Shadow Removal)
+    k_size = 71 if is_pdf else 151
     dilated = cv2.dilate(l, np.ones((k_size, k_size), np.uint8))
-    bg = cv2.medianBlur(dilated, 21) # Median blur is expensive, kept kernel at 21
+    bg = cv2.medianBlur(dilated, 51 if not is_pdf else 21)
     l_norm = cv2.divide(l, bg, scale=255)
     
-    xp = [0, 50, 150, 220, 255]
-    fp = [0, 40, 155, 255, 255] 
+    # 4. AGGRESSIVE BLEACH LOGIC (The fix for Gray Background)
+    # xp = Input Brightness, fp = Output Brightness
+    # We force everything above 145 (light gray) to 255 (Pure White)
+    xp = [0, 30, 80, 145, 255]
+    fp = [0, 20, 70, 255, 255] 
     table = np.interp(np.arange(256), xp, fp).astype('uint8')
     l_final = cv2.LUT(l_norm, table)
 
-    # Fast Masking
-    color_mask = cv2.threshold(l_final, 250, 255, cv2.THRESH_BINARY_INV)[1] / 255.0
-    background_mask = (l_final >= 250).astype(float)
+    # 5. Background Color Nuke
+    # Ensures no yellow/blue dots remain in the white areas
+    background_mask = (l_final >= 245).astype(float)
+    a_neutral = (a.astype(float) * (1 - background_mask) + 128 * background_mask).astype(np.uint8)
+    b_neutral = (b.astype(float) * (1 - background_mask) + 128 * background_mask).astype(np.uint8)
     
-    a_neutral = (a.astype(float) * (1 - background_mask) + 128 * background_mask)
-    b_neutral = (b.astype(float) * (1 - background_mask) + 128 * background_mask)
-    
-    a_res = (128 + (a_neutral - 128) * (1 + (color_boost - 1) * color_mask)).clip(0, 255).astype(np.uint8)
-    b_res = (128 + (b_neutral - 128) * (1 + (color_boost - 1) * color_mask)).clip(0, 255).astype(np.uint8)
+    # Selective Color Boost
+    color_mask = cv2.threshold(l_final, 240, 255, cv2.THRESH_BINARY_INV)[1] / 255.0
+    a_f, b_f = a_neutral.astype(float), b_neutral.astype(float)
+    a_res = (128 + (a_f - 128) * (1 + (color_boost - 1) * color_mask)).clip(0, 255).astype(np.uint8)
+    b_res = (128 + (b_f - 128) * (1 + (color_boost - 1) * color_mask)).clip(0, 255).astype(np.uint8)
 
     merged = cv2.merge((l_final, a_res, b_res))
     result = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
     
-    # Sharpness (Fast 3x3)
-    sharp_kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]]) * 0.03
+    # 6. Sharpness without grainy noise
+    sharp_kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]]) * 0.05
     sharp_kernel[1,1] += 1
-    return cv2.filter2D(result, -1, sharp_kernel)
+    final = cv2.filter2D(result, -1, sharp_kernel)
+    
+    # Force pure white 6-pixel border to hide photo edges
+    cv2.rectangle(final, (0,0), (final.shape[1], final.shape[0]), (255,255,255), 10)
+    
+    return final
 
 def scan_image(image, color_boost, do_warp, margins, mode, is_pdf=False):
     img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    
-    # --- STEP 1: RESOLUTION NORMALIZATION (Speed First) ---
-    h_orig, w_orig = img.shape[:2]
-    target_dim = 2000 if not is_pdf else 2400
-    if max(h_orig, w_orig) > target_dim:
-        scale = target_dim / max(h_orig, w_orig)
-        img = cv2.resize(img, (int(w_orig * scale), int(h_orig * scale)), interpolation=cv2.INTER_LINEAR)
+    h_o, w_o = img.shape[:2]
+    target = 2200
+    if not is_pdf and max(h_o, w_o) > target:
+        scale = target / max(h_o, w_o)
+        img = cv2.resize(img, (int(w_o * scale), int(h_o * scale)), interpolation=cv2.INTER_AREA)
 
-    # Manual Crop
     h, w = img.shape[:2]
     img = img[int(h*margins[0]/100):int(h*(1-margins[1]/100)), int(w*margins[2]/100):int(w*(1-margins[3]/100))]
     orig = img.copy()
@@ -79,7 +92,7 @@ def scan_image(image, color_boost, do_warp, margins, mode, is_pdf=False):
         for c in cnts:
             peri = cv2.arcLength(c, True)
             approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-            if len(approx) == 4 and cv2.contourArea(c) > (h * w * 0.05):
+            if len(approx) == 4 and cv2.contourArea(c) > (h * w * 0.1):
                 try:
                     rect = order_points(approx.reshape(4, 2))
                     w_w = int(max(np.linalg.norm(rect[2]-rect[3]), np.linalg.norm(rect[1]-rect[0])))
@@ -90,16 +103,14 @@ def scan_image(image, color_boost, do_warp, margins, mode, is_pdf=False):
                 break
 
     if mode == "Magic Color (Pro)":
-        return cv2.cvtColor(magic_color_engine(img, color_boost, is_pdf), cv2.COLOR_BGR2RGB)
+        res = magic_color_engine(img, color_boost, is_pdf)
+        return cv2.cvtColor(res, cv2.COLOR_BGR2RGB)
     elif mode == "B&W Pro":
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        if is_pdf:
-            return cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 25, 15)
-        else:
-            bg = cv2.medianBlur(cv2.dilate(gray, np.ones((11,11), np.uint8)), 21)
-            norm = cv2.divide(gray, bg, scale=255)
-            # Faster sharpening
-            res = cv2.adaptiveThreshold(norm, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 15)
-            return cv2.erode(res, np.ones((2,2), np.uint8), iterations=1)
+        bg = cv2.medianBlur(cv2.dilate(gray, np.ones((15,15), np.uint8)), 25)
+        norm = cv2.divide(gray, bg, scale=255)
+        # Bolder B&W Logic to survive high bleaching
+        res = cv2.adaptiveThreshold(norm, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 15)
+        return cv2.erode(res, np.ones((2,2), np.uint8), iterations=1)
 
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
